@@ -1,0 +1,262 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.82in]{geometry}
+\usepackage{mathpazo}      % Palatino text + matching math, to match the reference style
+\usepackage{amsmath,amssymb,amsthm,booktabs,microtype,enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+
+\newtheorem{construction}{Construction}
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
+\newtheorem{protocol}{Protocol}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\setlength{\parskip}{0.15em}
+\title{\LARGE\bfseries AMBER: Banked Embedding Compute as a\\[2pt]
+  Verifiable Offline Knowledge Artifact}
+\author{\normalsize Pete Ferr (@peteferr)\\[3pt]
+  \normalsize Amber by Teresa\\[3pt]
+  \footnotesize Reference implementation: \url{github.com/offchainthoughts/amber}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+We present \textsc{amber}, a format and protocol that turn the one-time cost of
+embedding a corpus into a single portable artifact that is a cryptographic
+commitment to the exact corpus and embedder that produced it. The artifact is
+the image of a document set under a pinned, deterministic embedding map, and the
+committed root is a public, regenerable witness to that map. Trust in the banked
+compute is gated by two independently verifiable predicates. An integrity check
+recomputes the commitment in $O(n)$ hashing and needs no model. A probabilistic
+\emph{audit} re-embeds a random sample of $k \ll n$ chunks and shows that the
+stored vectors are the faithful image of the source under the pinned map. We
+formalize the embedder as a deterministic map quantized to a fixed-point
+lattice, give the commitment with explicit domain separation, and prove a
+sequence of propositions that bound an adversary's advantage by the sample size
+and the tamper fraction. We separate what the artifact binds, namely corpus
+identity and embedding fidelity, from what it does not. It carries no claim about
+any downstream generator, and we prove the intuitive reading that ``the artifact
+\emph{is} the answer'' void. We state the guarantee against an explicit hierarchy
+of adversary classes and identify the exact anchor at which corpus authenticity,
+as opposed to embedding authenticity, becomes external.
+\end{abstract}
+
+\section{Introduction}
+Embedding a corpus is a bank-once, use-many computation. The heavy pass over
+documents runs once, and the resulting vectors are reused for offline retrieval.
+The banked result is portable and works without a network; only a light runtime
+remains at task time. A portable artifact that one did not produce oneself raises
+a question the retrieval literature rarely asks. Were the banked vectors honestly
+computed? A consumer holding a stored index has no model loaded and cannot, in
+general, tell faithful embeddings from fabricated ones.
+
+\textsc{amber} composes the two so that the banked artifact is a structural
+commitment to the computation that produced it, not just a container of vectors.
+The design objective is a single invariant.
+\begin{quote}
+\itshape (I) Trust in a banked artifact requires the conjunction of an integrity
+witness over its committed bytes and a faithful-embedding witness sampled from
+the source. A self-consistent artifact alone is insufficient, and either witness
+alone is insufficient for the adversary classes of \S\ref{sec:adv}.
+\end{quote}
+Realizing (I) needs care, because the intuitive reading, that the artifact
+\emph{is} the knowledge, is provably void (Proposition~\ref{prop:void}). Our
+contribution is a construction that delivers verifiable, reproducible,
+offline-portable banked compute, reduces its guarantee to standard hash
+assumptions, and gives a precise account of the boundary of that guarantee.
+
+\subsection{Notation and primitives}
+We write $\|$ for byte concatenation, $\mathsf{H}$ for \textsc{sha-256}, and
+$|x|$ for byte length. A corpus $\mathcal{D}$ is an ordered set of sources. An
+embedder $E:\Sigma^\ast\to\mathbb{R}^d$ maps text to a unit vector; $Q$ denotes
+fixed-point quantization to $\mathbb{Z}_{[-127,127]}^d$ and $Q^{-1}$ its
+dequantization. A chunker $C$ deterministically segments $\mathcal{D}$ into an
+ordered list of chunks. We write $\mathrm{negl}(\lambda)$ for a negligible
+function of the security parameter $\lambda$, here the hash output length.
+
+\section{System overview}
+\textsc{amber} is stratified into three layers with minimal coupling, summarized
+in Table~\ref{tab:layers}. The corpus is public and regenerable; the bank is the
+frozen embedding compute; the commitment is a succinct public root that binds the
+two. The decomposition is the source of the security argument: authenticity is
+confined to two scalars, the commitment root $r$ and an external corpus anchor
+$r_{\mathcal D}$.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+Layer & Object & Cost to verify \\
+\midrule
+Corpus & chunks $c_i = C(\mathcal{D})_i$ & external anchor \\
+Bank & vectors $q_i = Q(E(c_i))$ & $O(k)$ re-embed \\
+Commitment & root $r$ over $(c_i,q_i)$ & $O(n)$ or $O(\log n)$ \\
+\bottomrule
+\end{tabular}
+\caption{Layer decomposition. No layer substitutes for another. Integrity binds
+Bank to Commitment; audit binds Bank to Corpus.}
+\label{tab:layers}
+\end{table}
+
+\section{The chunker and embedder}
+\begin{construction}[Deterministic chunker]
+Normalize each source by \textsc{nfc} and whitespace collapse, then emit fixed
+word-count windows of size $w$ with overlap $o<w$, in source order. The
+parameters $(w,o,\text{norm})$ are serialized canonically and hashed; the digest
+enters the manifest, so two builders with the same corpus and parameters emit
+byte-identical chunks.
+\end{construction}
+
+\begin{construction}[Pinned embedder]
+\label{con:embed}
+The embedder's identity and configuration are serialized to a canonical
+descriptor whose digest is committed. The reference default is a signed
+feature-hashing map: tokens are hashed (keyed \textsc{blake2b}) to a bucket and
+sign, term frequencies accumulate, and the vector is $\ell_2$-normalized. It is
+dependency-free and bitwise reproducible. A semantic transformer is a drop-in
+under Construction~\ref{con:repro}.
+\end{construction}
+
+\section{The commitment}
+\begin{definition}[Leaf]
+For chunk $c_i$ and quantized vector $q_i$ in a sequence of length $n$, the leaf
+payload is $p_i = \mathrm{canon}(c_i)\,\|\,\texttt{0x1f}\,\|\,q_i$, and the leaf
+hash binds position and length,
+\[ \ell_i = \mathsf{H}\!\left(\texttt{0x00}\,\|\,i\,\|\,n\,\|\,|p_i|\,\|\,p_i\right). \]
+\end{definition}
+Internal nodes use a distinct tag $\texttt{0x01}$, so a leaf can never be
+reinterpreted as a node. The root $r=\mathrm{MR}(\ell_0,\dots,\ell_{n-1})$ is the
+commitment. A separate root $r_{\mathcal D}$ over $\mathrm{canon}(c_i)$ alone
+fixes corpus identity independently of the embedder.
+
+\begin{definition}[Artifact]
+An artifact is the tuple $A=(\textsf{manifest}, (c_i), (q_i))$ serialized as a
+single file, where the manifest carries the embedder and chunker digests, $d$,
+$n$, $r$, and $r_{\mathcal D}$.
+\end{definition}
+
+\section{Reproducibility under quantization}
+\label{sec:repro}
+Floating-point embedding is not guaranteed bitwise-stable across hardware, so a
+naive commitment to raw floats would be unverifiable in practice. We commit to
+quantized vectors and verify within a tolerance.
+\begin{construction}[$\tau$-reproducibility]
+\label{con:repro}
+$E$ is $\tau$-reproducible if for the pinned configuration and any chunk $c$,
+two evaluations $q,q'$ satisfy $\|q-q'\|_\infty\le\tau$. The deterministic
+default achieves $\tau=0$; a pinned transformer revision achieves a small $\tau$
+absorbed by $Q$.
+\end{construction}
+
+\section{Verification and audit}
+\begin{proposition}[Integrity]
+\label{prop:integrity}
+If the stored $(c_i,q_i)$ differ in any byte from those committed by $r$, then
+recomputing the root yields $r'\neq r$ except with probability
+$\mathrm{negl}(\lambda)$ under collision resistance of $\mathsf{H}$.
+\end{proposition}
+\begin{proof}[Proof sketch]
+A differing artifact that recomputes to the same root yields, by the standard
+Merkle extractor walking from root to the changed leaf, a collision of
+$\mathsf{H}$ on tagged, length-bound inputs. Domain separation prevents
+leaf and node confusion. \end{proof}
+Integrity is cheap and model-free, but it does not establish that the $q_i$ were
+honestly produced by $E$. A forger may commit self-consistent fabricated
+vectors. The audit closes this gap.
+
+\begin{protocol}[Audit]
+Sample $k$ leaf indices uniformly without replacement using OS entropy. For each
+sampled $i$, recompute $\hat q_i = Q(E(c_i))$ and declare leaf $i$
+\emph{inconsistent} if $\|\hat q_i - q_i\|_\infty>\tau$. Reject if any sampled
+leaf is inconsistent.
+\end{protocol}
+
+\begin{proposition}[Audit soundness]
+\label{prop:audit}
+Let $m$ of the $n$ leaves be inconsistent with the pinned $E$ at tolerance
+$\tau$, and let $\rho=m/n$. The audit rejects with probability
+\[ 1-\frac{\binom{n-m}{k}}{\binom{n}{k}} \;\ge\; 1-(1-\rho)^k, \]
+independent of which leaves are corrupt. To bound a missed tamper fraction
+$\rho$ at confidence $1-\delta$ it is enough to take
+$k\ge \lceil \ln(1/\delta)/\rho\rceil$ approximately.
+\end{proposition}
+\begin{proof}[Proof sketch]
+The probability that a without-replacement sample of size $k$ avoids all $m$
+inconsistent leaves is $\binom{n-m}{k}/\binom{n}{k}$. Sampling without
+replacement only increases detection relative to the independent bound
+$(1-\rho)^k$. \end{proof}
+
+\begin{remark}
+Audit cost is $O(k)$ embeddings with $k\ll n$, giving trust in arbitrarily large
+banked compute at sublinear marginal cost. The bound weakens gracefully as
+$\rho$ shrinks and is vacuous for a single-leaf forgery, which is the price of
+sampling.
+\end{remark}
+
+\section{What the artifact does and does not bind}
+\label{sec:adv}
+\begin{proposition}[Scope; the ``artifact is the answer'' is void]
+\label{prop:void}
+The commitment binds (a) corpus identity via $r_{\mathcal D}$ and (b) embedding
+fidelity under $E$ via $r$ and the audit. It binds no property of any downstream
+generator. For any two generators $G\neq G'$ consuming identical retrieved
+context, $G$ and $G'$ may emit different outputs, so no function of $r$ fixes a
+task output. Banked \emph{retrieval} is therefore not banked \emph{reasoning}.
+\end{proposition}
+
+We state the guarantee against an explicit hierarchy.
+\begin{description}[leftmargin=1.2em,itemsep=1pt]
+\item[$\mathcal A_1$ transport tamperer] flips bytes of a stored artifact.
+Defeated by Proposition~\ref{prop:integrity}.
+\item[$\mathcal A_2$ lazy forger] commits self-consistent vectors without
+running $E$. Defeated by Proposition~\ref{prop:audit}, not by integrity.
+\item[$\mathcal A_3$ corpus substituter] swaps source text but re-embeds
+honestly. Detected by comparing $r_{\mathcal D}$ to an independent anchor.
+\item[Out of scope] an adversary who honestly runs $E$ on a corpus of their
+choosing. \textsc{amber} authenticates the map, not the truthfulness of the
+inputs. This is the exact boundary at which an external $r_{\mathcal D}$ anchor,
+such as a signed release or a transparency log, becomes necessary.
+\end{description}
+
+\section{Related work}
+Retrieval-augmented generation with offline vector stores is well established and
+is not claimed here as novel. \textsc{amber} adds a verifiable, reproducible,
+portable commitment layer over it. Merkle trees give the integrity primitive;
+vector commitments and authenticated data structures give the position binding.
+The audit is a sampling argument in the spirit of proofs of retrievability and
+provable data possession, specialized to the predicate that the stored vector is
+the pinned map's image of the stored chunk. Content-addressed datasets and
+data-version tools hash artifacts but do not audit the computation relating two
+committed layers, which is the gap Proposition~\ref{prop:audit} fills.
+
+\section{Limitations}
+The default embedder is lexical, not semantic; retrieval quality needs a pinned
+transformer, which trades $\tau=0$ for a small tolerance and a revision pin. The
+audit assumes the auditor can run $E$. It certifies fidelity to a map, not the
+quality or truthfulness of the corpus. Corpus authenticity needs an external
+anchor. Quantization is lossy, and inputs near cell boundaries can inflate
+$\tau$. None of these affect Propositions \ref{prop:integrity}, \ref{prop:audit},
+and \ref{prop:void}, which concern binding rather than retrieval quality.
+
+\begin{thebibliography}{9}
+\small
+\bibitem{merkle} R.~C.~Merkle. A digital signature based on a conventional
+encryption function. \emph{CRYPTO}, 1987.
+\bibitem{rag} P.~Lewis et al. Retrieval-augmented generation for
+knowledge-intensive NLP tasks. \emph{NeurIPS}, 2020.
+\bibitem{por} A.~Juels and B.~Kaliski. PORs: proofs of retrievability for large
+files. \emph{ACM CCS}, 2007.
+\bibitem{pdp} G.~Ateniese et al. Provable data possession at untrusted stores.
+\emph{ACM CCS}, 2007.
+\bibitem{vc} D.~Catalano and D.~Fiore. Vector commitments and their
+applications. \emph{PKC}, 2013.
+\bibitem{fh} K.~Weinberger et al. Feature hashing for large scale multitask
+learning. \emph{ICML}, 2009.
+\end{thebibliography}
+
+\end{document}

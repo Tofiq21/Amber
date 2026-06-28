@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amber-kb"
+version = "0.1.0"
+description = "Auditable, portable, self-verifying offline knowledge artifacts (banked embedding retrieval)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Pete Ferr", email = "" }]
+keywords = ["rag", "embeddings", "merkle", "offline", "retrieval", "provenance"]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+semantic = ["sentence-transformers>=2.2"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+amber = "amber.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/offchainthoughts/amber"
+Paper = "https://github.com/offchainthoughts/amber/blob/main/paper/amber.pdf"
+
+[tool.setuptools]
+packages = ["amber"]
