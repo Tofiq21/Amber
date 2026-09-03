@@ -9,7 +9,7 @@ description = "Auditable, portable, self-verifying offline knowledge artifacts (
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Pete Ferr", email = "" }]
+authors = [{ name = "John Reiter", email = "" }]
 keywords = ["rag", "embeddings", "merkle", "offline", "retrieval", "provenance"]
 dependencies = ["numpy>=1.24"]
 
