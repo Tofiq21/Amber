@@ -1,6 +1,6 @@
 # AMBER
 
-**Amber by Teresa.** Author: Pete Ferr (@peteferr).
+**Amber by Teresa.** Author: John Reiter (@caeca).
 Repo: [github.com/offchainthoughts/amber](https://github.com/offchainthoughts/amber).
 
 Bank the expensive compute once, then carry it offline as a single file that can
